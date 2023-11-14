@@ -1,6 +1,10 @@
 import express from 'express'
 import { validate } from 'express-jsonschema'
 import { JSONSchema4 } from 'json-schema'
+import connect from '../db'
+import { Request, ParamsDictionary } from 'express-serve-static-core'
+import { ParsedQs } from 'qs'
+import { ObjectId } from 'mongodb'
 
 const router = express.Router()
 
@@ -15,9 +19,16 @@ interface Timesheet {
   description: string
   items: LineItem[]
   rate: number
+  totalTime: number
+  totalCost: number
 }
 
-const timesheets: Timesheet[] = []
+const getTimesheet = (req: Request<ParamsDictionary, any, any, ParsedQs, Record<string, any>>): Timesheet => {
+  const timesheet = req.body as Timesheet
+  timesheet.totalTime = timesheet.items.map(i => i.numberOfMinutes).reduce((a,b) => a + b, 0)
+  timesheet.totalCost = timesheet.totalTime * timesheet.rate
+  return timesheet
+}
 
 const TimesheetSchema: JSONSchema4 = {
   type: 'object',
@@ -37,36 +48,39 @@ const TimesheetSchema: JSONSchema4 = {
   }
 }
 
-router.get('/', (req, res) => {
-  res.json(timesheets);
-});
+router.get('/', async (req, res) => {
+  const db = await connect()
+  const timesheets = await db.collection("timesheets").find({}).limit(50).toArray()
+  res.json(timesheets)
+})
 
-router.get('/:id', (req, res) => {
-  const id = parseInt(req.params.id, 10)
-  const timesheet = timesheets.find(t => t.id === id)
+router.get('/:id', async (req, res) => {
+  const db = await connect()
+  const timesheet = await db.collection("timesheets").findOne({ _id: new ObjectId(req.params.id) })
   if (timesheet) {
-    res.json(timesheet);
+    res.json(timesheet)
   } else {
     res.sendStatus(404)
   }
+})
+
+router.post('/', validate({ body: TimesheetSchema }), async (req, res) => {
+  const timesheet = getTimesheet(req)
+  const db = await connect()
+  const result = await db.collection("timesheets").insertOne(timesheet)
+  res.status(201).send({ id: result.insertedId })
 });
 
-router.post('/', validate({ body: TimesheetSchema }), (req, res) => {
-  const timesheet = { ...req.body, id: timesheets.length }
-  timesheets.push(timesheet)
-  res.sendStatus(201)
-});
+router.put('/:id', validate({ body: TimesheetSchema }), async (req, res) => {
+  const timesheet = getTimesheet(req)
+  const db = await connect()
+  const result = await db.collection("timesheets").replaceOne({ _id: new ObjectId(req.params.id) }, timesheet)
 
-router.put('/:id', validate({ body: TimesheetSchema }), (req, res) => {
-  const id = parseInt(req.params.id, 10)
-  const updatedTimesheet = { ...req.body, id }
-  const index = timesheets.findIndex(t => t.id === id)
-  if (index > -1) {
-    timesheets.splice(index, 1, updatedTimesheet)
+  if (result.modifiedCount > 0) {
     res.sendStatus(200)
   } else {
     res.sendStatus(404)
   }
-});
+})
 
 export default router
