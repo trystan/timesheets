@@ -6,10 +6,6 @@ const port = process.env.PORT ?? 8080
 
 app.use(express.json())
 
-app.get('/', (req, res) => {
-  res.send('Hello');
-});
-
 app.use('/timesheets', timesheets)
 
 app.use((err: any, req: any, res: any, next: any) => {
